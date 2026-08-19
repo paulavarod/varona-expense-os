@@ -1,0 +1,19 @@
+# Local/system
+.DS_Store
+.env
+.env.local
+
+# Sensitive exports
+exports/*.xlsx
+exports/*.csv
+exports/*.json
+
+# Accountant packages with real documents
+accountant_package/*/03_original_documents/
+accountant_package/**/*.pdf
+accountant_package/**/*.png
+accountant_package/**/*.jpg
+accountant_package/**/*.jpeg
+
+# Archives
+archive/
