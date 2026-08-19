@@ -1,0 +1,96 @@
+name: Deploy Varona Expense OS
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - prod
+
+jobs:
+  deploy:
+    name: Deploy TaxHacker to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate selected environment
+        run: |
+          if [ "${{ github.event.inputs.environment }}" != "test" ] && [ "${{ github.event.inputs.environment }}" != "prod" ]; then
+            echo "Invalid environment"
+            exit 1
+          fi
+
+      - name: Prepare deployment folder
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          mkdir -p deploy_payload
+          cp -R "environments/${ENVIRONMENT}/." deploy_payload/
+          echo "Prepared deployment payload for ${ENVIRONMENT}"
+
+      - name: Copy Docker files to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          source: "deploy_payload/*"
+          target: "/tmp/varona-expense-${{ github.event.inputs.environment }}"
+          strip_components: 1
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            APP_DIR="/opt/varona/expense-${ENVIRONMENT}"
+            TMP_DIR="/tmp/varona-expense-${ENVIRONMENT}"
+
+            echo "Deploying Varona Expense OS: ${ENVIRONMENT}"
+            sudo mkdir -p "$APP_DIR"
+            sudo chown -R "$USER":"$USER" "$APP_DIR"
+
+            rsync -a "$TMP_DIR/" "$APP_DIR/"
+            cd "$APP_DIR"
+
+            if [ ! -f .env ]; then
+              echo "Creating .env from GitHub secrets"
+              cat > .env <<EOF
+            POSTGRES_USER=postgres
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            POSTGRES_DB=taxhacker_${ENVIRONMENT}
+            BETTER_AUTH_SECRET=${{ secrets.BETTER_AUTH_SECRET }}
+            OPENAI_MODEL_NAME=gpt-4o-mini
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            GOOGLE_MODEL_NAME=gemini-2.5-flash
+            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+            MISTRAL_MODEL_NAME=mistral-medium-latest
+            MISTRAL_API_KEY=${{ secrets.MISTRAL_API_KEY }}
+            EOF
+            else
+              echo ".env already exists; keeping existing server secrets"
+            fi
+
+            docker compose pull
+            docker compose up -d
+            docker compose ps
+
+            if [ "$ENVIRONMENT" = "test" ]; then
+              echo "TEST should be available on port 7331"
+            else
+              echo "PROD should be available on port 7332"
+            fi
